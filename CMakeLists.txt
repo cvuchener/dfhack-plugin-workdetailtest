@@ -1,0 +1,1 @@
+dfhack_plugin(workdetailtest workdetailtest.cpp PROTOBUFS workdetailtest)

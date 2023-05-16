@@ -1,0 +1,89 @@
+syntax = "proto2";
+
+package dfproto.workdetailtest;
+
+option optimize_for = LITE_RUNTIME;
+
+message ProcessInfo {
+    optional int32 pid = 1;
+    optional uint64 cookie_address = 2;
+    optional uint32 cookie_value = 3;
+}
+
+// GetProcessInfo: EmptyMessage -> ProcessInfo
+
+enum Viewscreen {
+    SetupDwarfGame = 0;
+}
+
+message GameState {
+    optional uint64 world_loaded = 1;
+    optional uint64 map_loaded = 2;
+    optional Viewscreen viewscreen = 3;
+}
+
+// GetGameState:  EmptyMessage -> GameState
+
+message Result {
+    optional bool success = 1;
+    optional string error = 2;
+}
+
+message UnitProperties {
+    // for lookup:
+    optional uint32 id = 1;
+    // changes if set:
+    optional string nickname = 2;
+    optional bool only_do_assigned_jobs = 3;
+}
+
+// EditUnit: UnitProperties -> Result
+
+enum WorkDetailMode {
+    EverybodyDoesThis = 1;
+    NobodyDoesThis = 2;
+    OnlySelectedDoesThis = 3;
+}
+
+message WorkDetailAssignment {
+    optional int32 unit_id = 1;
+    optional bool enable = 2;
+}
+
+message WorkDetailLabor {
+    optional int32 labor = 1;
+    optional bool enable = 2;
+}
+
+message WorkDetailProperties {
+    // for lookup:
+    optional uint32 work_detail_index = 1;
+    optional string work_detail_name = 2;
+    // changes if set:
+    optional string new_name = 3;
+    optional WorkDetailMode new_mode = 4;
+    repeated WorkDetailAssignment assignment_changes = 5;
+    repeated WorkDetailLabor labor_changes = 6;
+    optional int32 new_icon = 7;
+}
+
+message WorkDetailResult {
+    optional Result work_detail = 1;
+    optional Result mode = 2;
+    repeated Result assignments = 3;
+    repeated Result labors = 4;
+    optional Result icon = 5;
+}
+
+// EditWorkDetail: WorkDetailProperties -> WorkDetailResult
+
+message WorkDetailChanges {
+    repeated WorkDetailProperties work_details = 1;
+}
+
+message WorkDetailResults {
+    repeated WorkDetailResult results = 1;
+}
+
+// EditWorkDetails: WorkDetailChanges -> WorkDetailResults
+
