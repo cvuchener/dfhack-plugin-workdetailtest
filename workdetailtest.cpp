@@ -338,34 +338,23 @@ static command_result edit_unit(color_ostream &out, const UnitProperties *props,
     return CR_OK;
 }
 
-static command_result edit_work_detail(color_ostream &out, const WorkDetailProperties *props, WorkDetailResult *result)
+static command_result set_work_detail_properties(
+        color_ostream &out,
+        df::work_detail *work_detail,
+        const WorkDetailProperties &props,
+        WorkDetailResult *result)
 {
     bool labor_changed = false;
-    // Find Work detail
-    auto wd_result = result->mutable_work_detail();
-    auto index = props->work_detail_index();
-    if (index >= plotinfo->labor_info.work_details.size()) {
-        wd_result->set_success(false);
-        wd_result->set_error(std::format("invalid work detail index: {}", index));
-        return CR_OK;
-    }
-    auto work_detail = plotinfo->labor_info.work_details[index];
-    if (work_detail->name != props->work_detail_name()) {
-        wd_result->set_success(false);
-        wd_result->set_error(std::format("invalid work detail name: {} is named {}, parameter was {}", index, work_detail->name, props->work_detail_name()));
-        return CR_OK;
-    }
-    wd_result->set_success(true);
     // Name
-    if (props->has_new_name()) {
-        work_detail->name = props->new_name();
+    if (props.has_name()) {
+        work_detail->name = props.name();
     }
     // Mode
-    if (props->has_new_mode()) {
+    if (props.has_mode()) {
         auto r = result->mutable_mode();
         r->set_success(true);
         auto old_mode = work_detail->work_detail_flags.bits.mode;
-        switch (props->new_mode()) {
+        switch (props.mode()) {
         case WorkDetailMode::EverybodyDoesThis:
             work_detail->work_detail_flags.bits.mode = df::work_detail_mode::EverybodyDoesThis;
             break;
@@ -377,16 +366,16 @@ static command_result edit_work_detail(color_ostream &out, const WorkDetailPrope
             break;
         default:
             r->set_success(false);
-            r->set_error(std::format("Invalid work detail mode: {}", static_cast<int>(props->new_mode())));
+            r->set_error(std::format("Invalid work detail mode: {}", static_cast<int>(props.mode())));
             break;
         }
         if (work_detail->work_detail_flags.bits.mode != old_mode)
             labor_changed = true;
     }
     // Assignments
-    if (auto s = props->assignment_changes_size())
+    if (auto s = props.assignments_size())
         result->mutable_assignments()->Reserve(s);
-    for (const auto &assign: props->assignment_changes()) {
+    for (const auto &assign: props.assignments()) {
         auto r = result->mutable_assignments()->Add();
         auto unit = df::unit::find(assign.unit_id());
         if (!unit) {
@@ -413,9 +402,9 @@ static command_result edit_work_detail(color_ostream &out, const WorkDetailPrope
         update_unit_labor(unit);
     }
     // Labors
-    if (auto s = props->labor_changes_size())
+    if (auto s = props.labors_size())
         result->mutable_labors()->Reserve(s);
-    for (const auto &labor: props->labor_changes()) {
+    for (const auto &labor: props.labors()) {
         auto r = result->mutable_labors()->Add();
         if (labor.labor() < 0 || labor.labor() >= LaborCount) {
             r->set_success(false);
@@ -427,9 +416,9 @@ static command_result edit_work_detail(color_ostream &out, const WorkDetailPrope
         labor_changed = true;
     }
     // Icon
-    if (props->has_new_icon()) {
+    if (props.has_icon()) {
         auto r = result->mutable_icon();
-        auto icon_id = props->new_icon();
+        auto icon_id = props.icon();
         r->set_success(df::enum_traits<decltype(work_detail->icon)>::is_valid(icon_id));
         if (r->success())
             work_detail->icon = static_cast<decltype(work_detail->icon)>(icon_id);
@@ -444,12 +433,107 @@ static command_result edit_work_detail(color_ostream &out, const WorkDetailPrope
     return CR_OK;
 }
 
-static command_result edit_work_details(color_ostream &out, const WorkDetailChanges *changes, WorkDetailResults *results)
+// Returns iterator in plotinfo->labor_info.work_details (end if not found)
+static auto find_work_detail(const WorkDetailId &id, Result *result)
 {
-    auto r = results->mutable_results();
-    r->Reserve(changes->work_details_size());
-    for (const auto &change: changes->work_details())
-        edit_work_detail(out, &change, r->Add());
+    auto &work_details = plotinfo->labor_info.work_details;
+    if (id.index() >= work_details.size()) {
+        result->set_success(false);
+        result->set_error(std::format("invalid work detail index: {}", id.index()));
+        return work_details.end();
+    }
+    auto work_detail = work_details.begin() + id.index();
+    if ((*work_detail)->name != id.name()) {
+        result->set_success(false);
+        result->set_error(std::format("invalid work detail name: {} is named {}, parameter was {}",
+                    id.index(), (*work_detail)->name, id.name()));
+        return work_details.end();
+    }
+    result->set_success(true);
+    return work_detail;
+}
+
+static command_result edit_work_detail(
+        color_ostream &out,
+        const EditWorkDetail *edit,
+        WorkDetailResult *result)
+{
+    // Find Work detail
+    auto work_detail = find_work_detail(edit->id(), result->mutable_work_detail());
+    if (work_detail == plotinfo->labor_info.work_details.end())
+        return CR_OK;
+    // Apply changes
+    return set_work_detail_properties(out, *work_detail, edit->changes(), result);
+}
+
+static command_result add_work_detail(
+        color_ostream &out,
+        const AddWorkDetail *add,
+        WorkDetailResult *result)
+{
+    // Create new work detail
+    auto new_work_detail = new df::work_detail;
+    new_work_detail->name = "New work detail";
+    auto &work_details = plotinfo->labor_info.work_details;
+    // Insert in work detail vector
+    auto insert_pos = add->has_position() && add->position() < work_details.size()
+        ? work_details.begin() + add->position()
+        : work_details.end();
+    work_details.insert(insert_pos, new_work_detail);
+    result->mutable_work_detail()->set_success(true);
+    // Set new work detail properties
+    return set_work_detail_properties(out, new_work_detail, add->properties(), result);
+}
+
+static command_result remove_work_detail(
+        color_ostream &out,
+        const RemoveWorkDetail *remove,
+        Result *result)
+{
+    // Find Work detail
+    auto work_detail = find_work_detail(remove->id(), result);
+    if (work_detail == plotinfo->labor_info.work_details.end())
+        return CR_OK;
+    // Delete
+    delete *work_detail;
+    plotinfo->labor_info.work_details.erase(work_detail);
+    return CR_OK;
+}
+
+static command_result move_work_detail(
+        color_ostream &out,
+        const MoveWorkDetail *move,
+        Result *result)
+{
+    auto &work_details = plotinfo->labor_info.work_details;
+    // Find Work detail
+    auto work_detail = find_work_detail(move->id(), result);
+    if (work_detail == plotinfo->labor_info.work_details.end())
+        return CR_OK;
+    std::size_t old_position = distance(work_details.begin(), work_detail);
+    // Check new position
+    if (!move->has_new_position()) {
+        result->set_success(false);
+        result->set_error("Missing new position");
+        return CR_OK;
+    }
+    std::size_t new_position = move->new_position();
+    if (new_position >= work_details.size()) {
+        result->set_success(false);
+        result->set_error(std::format("Invalid new position: {}, size is {}",
+                new_position, work_details.size()));
+        return CR_OK;
+    }
+    // Apply move
+    if (new_position == old_position) {
+        // Nothing to do
+        return CR_OK;
+    }
+    auto new_pos_it = next(work_details.begin(), new_position);
+    if (new_position > old_position)
+        std::rotate(work_detail, next(work_detail), new_pos_it);
+    else
+        std::rotate(new_pos_it, work_detail, next(work_detail));
     return CR_OK;
 }
 
@@ -460,6 +544,8 @@ DFhackCExport RPCService *plugin_rpcconnect(color_ostream &out)
     svc->addFunction("GetGameState", get_game_state, SF_ALLOW_REMOTE);
     svc->addFunction("EditUnit", edit_unit, SF_ALLOW_REMOTE);
     svc->addFunction("EditWorkDetail", edit_work_detail, SF_ALLOW_REMOTE);
-    svc->addFunction("EditWorkDetails", edit_work_details, SF_ALLOW_REMOTE);
+    svc->addFunction("AddWorkDetail", add_work_detail, SF_ALLOW_REMOTE);
+    svc->addFunction("RemoveWorkDetail", remove_work_detail, SF_ALLOW_REMOTE);
+    svc->addFunction("MoveWorkDetail", move_work_detail, SF_ALLOW_REMOTE);
     return svc;
 }

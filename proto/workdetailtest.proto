@@ -55,16 +55,37 @@ message WorkDetailLabor {
     optional bool enable = 2;
 }
 
+message WorkDetailId {
+    optional uint32 index = 1;
+    optional string name = 2;
+}
+
 message WorkDetailProperties {
-    // for lookup:
-    optional uint32 work_detail_index = 1;
-    optional string work_detail_name = 2;
-    // changes if set:
-    optional string new_name = 3;
-    optional WorkDetailMode new_mode = 4;
-    repeated WorkDetailAssignment assignment_changes = 5;
-    repeated WorkDetailLabor labor_changes = 6;
-    optional int32 new_icon = 7;
+    // changes only if set or non-empty
+    optional string name = 1;
+    optional WorkDetailMode mode = 2;
+    repeated WorkDetailAssignment assignments = 3;
+    repeated WorkDetailLabor labors = 4;
+    optional int32 icon = 5;
+}
+
+message EditWorkDetail {
+    optional WorkDetailId id = 1;
+    optional WorkDetailProperties changes = 2;
+}
+
+message AddWorkDetail {
+    optional uint32 position = 1; // push at end if missing
+    optional WorkDetailProperties properties = 2;
+}
+
+message RemoveWorkDetail {
+    optional WorkDetailId id = 1;
+}
+
+message MoveWorkDetail {
+    optional WorkDetailId id = 1;
+    optional uint32 new_position = 2;
 }
 
 message WorkDetailResult {
@@ -75,15 +96,7 @@ message WorkDetailResult {
     optional Result icon = 5;
 }
 
-// EditWorkDetail: WorkDetailProperties -> WorkDetailResult
-
-message WorkDetailChanges {
-    repeated WorkDetailProperties work_details = 1;
-}
-
-message WorkDetailResults {
-    repeated WorkDetailResult results = 1;
-}
-
-// EditWorkDetails: WorkDetailChanges -> WorkDetailResults
-
+// EditWorkDetail: EditWorkDetail -> WorkDetailResult
+// AddWorkDetail: AddWorkDetail -> WorkDetailResult
+// RemoveWorkDetail: RemoveWorkDetail -> Result
+// MoveWorkDetail: MoveWorkDetail -> Result
