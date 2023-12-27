@@ -67,6 +67,8 @@ message WorkDetailProperties {
     repeated WorkDetailAssignment assignments = 3;
     repeated WorkDetailLabor labors = 4;
     optional int32 icon = 5;
+    optional bool no_modify = 6;
+    optional bool cannot_be_everybody = 7;
 }
 
 message EditWorkDetail {

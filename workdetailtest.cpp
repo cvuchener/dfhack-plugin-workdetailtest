@@ -425,6 +425,11 @@ static command_result set_work_detail_properties(
         else
             r->set_error(std::format("Invalid icon value: {}", icon_id));
     }
+    // Other flags
+    if (props.has_no_modify())
+        work_detail->work_detail_flags.bits.no_modify = props.no_modify();
+    if (props.has_cannot_be_everybody())
+        work_detail->work_detail_flags.bits.cannot_be_everybody = props.cannot_be_everybody();
     // Update all labors in case of global work detail changes
     if (labor_changed) {
         for (auto unit: world->units.active)
