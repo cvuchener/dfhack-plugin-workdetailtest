@@ -458,6 +458,8 @@ static command_result edit_work_detail(
         const EditWorkDetail *edit,
         WorkDetailResult *result)
 {
+    if (*df::global::gamemode != df::game_mode::DWARF)
+        return CR_FAILURE;
     // Find Work detail
     auto work_detail = find_work_detail(edit->id(), result->mutable_work_detail());
     if (work_detail == plotinfo->labor_info.work_details.end())
@@ -471,6 +473,8 @@ static command_result add_work_detail(
         const AddWorkDetail *add,
         WorkDetailResult *result)
 {
+    if (*df::global::gamemode != df::game_mode::DWARF)
+        return CR_FAILURE;
     // Create new work detail
     auto new_work_detail = new df::work_detail;
     new_work_detail->name = "New work detail";
@@ -490,6 +494,8 @@ static command_result remove_work_detail(
         const RemoveWorkDetail *remove,
         Result *result)
 {
+    if (*df::global::gamemode != df::game_mode::DWARF)
+        return CR_FAILURE;
     // Find Work detail
     auto work_detail = find_work_detail(remove->id(), result);
     if (work_detail == plotinfo->labor_info.work_details.end())
@@ -505,6 +511,8 @@ static command_result move_work_detail(
         const MoveWorkDetail *move,
         Result *result)
 {
+    if (*df::global::gamemode != df::game_mode::DWARF)
+        return CR_FAILURE;
     auto &work_details = plotinfo->labor_info.work_details;
     // Find Work detail
     auto work_detail = find_work_detail(move->id(), result);
