@@ -1,1 +1,5 @@
-dfhack_plugin(workdetailtest workdetailtest.cpp PROTOBUFS workdetailtest)
+dfhack_plugin(workdetailtest
+    workdetailtest.cpp
+    Labor.cpp
+    UnitsEx.cpp
+    PROTOBUFS workdetailtest)

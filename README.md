@@ -16,19 +16,32 @@ Remote API
 ### `workdetailtest::GetProcessInfo`
 
 `dfproto::EmptyMessage` → `dfproto::workdetailtest::ProcessInfo`
+
 ### `workdetailtest::GetGameState`
 
 `dfproto::EmptyMessage` → `dfproto::workdetailtest::GameState`
 
 ### `workdetailtest::EditUnit`
 
-`dfproto::workdetailtest::UnitProperties` → `dfproto::workdetailtest::Result`
+`dfproto::workdetailtest::EditUnit` → `dfproto::workdetailtest::UnitResult`
+
+### `workdetailtest::EditUnits`
+
+`dfproto::workdetailtest::EditUnits` → `dfproto::workdetailtest::UnitResults`
 
 ### `workdetailtest::EditWorkDetail`
 
-`dfproto::workdetailtest::WorkDetailProperties` → `dfproto::workdetailtest::WorkDetailResult`
+`dfproto::workdetailtest::EditWorkDetail` → `dfproto::workdetailtest::WorkDetailResult`
 
-### `workdetailtest::EditWorkDetails`
+### `workdetailtest::AddWorkDetail`
 
-`dfproto::workdetailtest::WorkDetailChanges` → `dfproto::workdetailtest::WorkDetailResults`
+`dfproto::workdetailtest::AddWorkDetail` → `dfproto::workdetailtest::WorkDetailResult`
+
+### `workdetailtest::RemoveWorkDetail`
+
+`dfproto::workdetailtest::RemoveWorkDetail` → `dfproto::workdetailtest::WorkDetailResult`
+
+### `workdetailtest::MoveWorkDetail`
+
+`dfproto::workdetailtest::MoveWorkDetail` → `dfproto::workdetailtest::WorkDetailResult`
 

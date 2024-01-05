@@ -21,30 +21,23 @@
 #include "RemoteServer.h"
 #include "MiscUtils.h"
 #include "DataDefs.h"
-#include "modules/Units.h"
 #include "modules/Translation.h"
 #include "modules/Job.h"
+#include "UnitsEx.h"
+#include "Labor.h"
 
-#include "df/world.h"
-#include "df/gamest.h"
+#include "df/interfacest.h"
 #include "df/plotinfost.h"
 #include "df/unit.h"
-#include "df/historical_figure.h"
-#include "df/historical_entity.h"
-#include "df/histfig_entity_link_positionst.h"
-#include "df/entity_position.h"
-#include "df/entity_position_assignment.h"
-#include "df/histfig_hf_link.h"
-#include "df/work_detail.h"
-#include "df/occupation.h"
-#include "df/job_item_ref.h"
 #include "df/viewscreen_setupdwarfgamest.h"
-#include "df/interfacest.h"
+#include "df/work_detail.h"
+#include "df/world.h"
 
 #include "workdetailtest.pb.h"
 
 #include <random>
 #include <format>
+#include <cstring>
 
 #if defined(WIN32)
 #   include <windows.h>
@@ -62,202 +55,6 @@ REQUIRE_GLOBAL(plotinfo);
 
 static constexpr int LaborCount = std::extent_v<decltype(df::unit::T_status::labors)>;
 
-static bool match_position(df::historical_figure *histfig, int group_id, df::entity_position_flags flag)
-{
-    for (auto link: histfig->entity_links) {
-        auto epos = strict_virtual_cast<df::histfig_entity_link_positionst>(link);
-        if (!epos)
-            continue;
-        auto entity = df::historical_entity::find(epos->entity_id);
-        if (!entity)
-            continue;
-        auto assignment = binsearch_in_vector(entity->positions.assignments, epos->assignment_id);
-        if (!assignment)
-            continue;
-        auto position = binsearch_in_vector(entity->positions.own, assignment->position_id);
-        if (!position)
-            continue;
-        if (entity->id == group_id && position->flags.is_set(flag))
-            return true;
-    }
-    return false;
-}
-
-static bool has_menial_work_exemption(df::unit *u, int group_id)
-{
-    using namespace df::enums::entity_position_flags;
-    auto histfig = df::historical_figure::find(u->hist_figure_id);
-    if (!histfig)
-        return false;
-    if (match_position(histfig, group_id, MENIAL_WORK_EXEMPTION))
-        return true;
-    for (auto link: histfig->histfig_links) {
-        if (link->getType() == df::histfig_hf_link_type::SPOUSE) {
-            auto spouse_hf = df::historical_figure::find(link->target_hf);
-            if (spouse_hf && match_position(spouse_hf, group_id, MENIAL_WORK_EXEMPTION_SPOUSE))
-                return true;
-        }
-    }
-    return false;
-}
-
-static bool can_learn(df::unit *u)
-{
-    if (u->curse.rem_tags1.bits.CAN_LEARN)
-        return false;
-    if (u->curse.add_tags1.bits.CAN_LEARN)
-        return true;
-    return Units::casteFlagSet(u->race, u->caste, df::caste_raw_flags::CAN_LEARN);
-}
-
-static bool can_assign_work_detail(df::unit *u)
-{
-    if (u->flags1.bits.inactive)
-        return false;
-    if (!Units::isFortControlled(u))
-        return false;
-    if (Units::isTamable(u))
-        return false;
-    if (has_menial_work_exemption(u, plotinfo->group_id))
-        return false;
-    if (!Units::isAdult(u))
-        return false;
-    if (u->enemy.undead)
-        return false;
-    if (!can_learn(u))
-        return false;
-    if (!Units::isOwnGroup(u) && std::any_of(u->occupations.begin(), u->occupations.end(), [](df::occupation *occ) {
-                using namespace df::enums::occupation_type;
-                return occ->type == PERFORMER || occ->type == SCHOLAR;
-            }))
-        return false;
-    if (std::any_of(u->occupations.begin(), u->occupations.end(), [](df::occupation *occ) {
-                using namespace df::enums::occupation_type;
-                return occ->type == MERCENARY || occ->type == MONSTER_SLAYER;
-            }))
-        return false;
-    return true;
-}
-
-static void cancel_pickup_mismatched_equipment(df::unit *u)
-{
-    auto job = u->job.current_job;
-    if (!job || job->job_type != df::job_type::PickupEquipment)
-        return;
-    if (job->items.empty())
-        return;
-    auto item = job->items.front()->item;
-    if (item->getType() != df::item_type::WEAPON)
-        return;
-    auto weapon_skill = static_cast<df::job_skill>(item->getRangedSkill());
-    if (weapon_skill == df::job_skill::NONE)
-        weapon_skill = static_cast<df::job_skill>(item->getMeleeSkill());
-    auto labor_skill = df::job_skill::NONE;
-    if (u->status.labors[df::unit_labor::MINE])
-        labor_skill = df::job_skill::MINING;
-    if (u->status.labors[df::unit_labor::CUTWOOD])
-        labor_skill = df::job_skill::AXE;
-    if (weapon_skill == labor_skill && !(labor_skill == df::job_skill::AXE && item->getSharpness() <= 0))
-        return;
-    // TODO: cancel using df::job_cancel_reason::EQUIPMENT_MISMATCH
-    Job::removeJob(job);
-}
-
-static void update_unit_labor(df::unit *u)
-{
-    if (game->external_flag & 1)
-        return;
-    if (u->profession == df::profession::BABY
-            || Units::isTamable(u)
-            || !Units::isFortControlled(u)) {
-        std::memset(u->status.labors, 0, LaborCount*sizeof(bool));
-    }
-    else if (u->profession == df::profession::CHILD) {
-        if (!plotinfo->labor_info.flags.bits.children_do_chores
-                || vector_contains(plotinfo->labor_info.chores_exempted_children, u->id))
-            std::memset(u->status.labors, 0, LaborCount*sizeof(bool));
-        else
-            std::memcpy(u->status.labors, plotinfo->labor_info.chores, LaborCount*sizeof(bool));
-    }
-    else { // adult citizens
-        // save tool-using labors
-        bool old_mine = u->status.labors[df::unit_labor::MINE];
-        bool old_cutwood = u->status.labors[df::unit_labor::CUTWOOD];
-        bool old_hunt = u->status.labors[df::unit_labor::HUNT];
-
-        // set default labors
-        auto no_default_labors = has_menial_work_exemption(u, plotinfo->group_id) || u->flags4.bits.only_do_assigned_jobs;
-        memset(u->status.labors, !no_default_labors, LaborCount*sizeof(bool));
-        u->status.labors[df::unit_labor::MINE] = false;
-        u->status.labors[df::unit_labor::CUTWOOD] = false;
-        u->status.labors[df::unit_labor::HUNT] = false;
-        u->status.labors[df::unit_labor::FISH] = false;
-        u->status.labors[df::unit_labor::DIAGNOSE] = false;
-        u->status.labors[df::unit_labor::SURGERY] = false;
-        u->status.labors[df::unit_labor::BONE_SETTING] = false;
-
-        // clear labors from disabled/limited work details
-        for (auto work_detail: plotinfo->labor_info.work_details) {
-            switch (work_detail->work_detail_flags.bits.mode) {
-            case df::work_detail_mode::EverybodyDoesThis:
-                break;
-            default:
-                for (int i = 0; i < LaborCount; ++i)
-                    if (work_detail->allowed_labors[i])
-                        u->status.labors[i] = false;
-                break;
-            }
-        }
-        // set labors from work details
-        for (auto work_detail: plotinfo->labor_info.work_details) {
-            switch (work_detail->work_detail_flags.bits.mode) {
-            case df::work_detail_mode::OnlySelectedDoesThis:
-                if (vector_contains(work_detail->assigned_units, u->id))
-                    for (int i = 0; i < LaborCount; ++i)
-                        if (work_detail->allowed_labors[i])
-                            u->status.labors[i] = true;
-                break;
-            case df::work_detail_mode::EverybodyDoesThis:
-                if (!no_default_labors || vector_contains(work_detail->assigned_units, u->id))
-                    for (int i = 0; i < LaborCount; ++i)
-                        if (work_detail->allowed_labors[i])
-                            u->status.labors[i] = true;
-                break;
-            default:
-                break;
-            }
-        }
-        // set labors for medical occupations
-        for (auto o: u->occupations) {
-            switch (o->type) {
-            case df::occupation_type::DOCTOR:
-                u->status.labors[df::unit_labor::DIAGNOSE] = true;
-                u->status.labors[df::unit_labor::SURGERY] = true;
-                u->status.labors[df::unit_labor::BONE_SETTING] = true;
-                break;
-            case df::occupation_type::DIAGNOSTICIAN:
-                u->status.labors[df::unit_labor::DIAGNOSE] = true;
-                break;
-            case df::occupation_type::SURGEON:
-                u->status.labors[df::unit_labor::SURGERY] = true;
-                break;
-            case df::occupation_type::BONE_DOCTOR:
-                u->status.labors[df::unit_labor::BONE_SETTING] = true;
-                break;
-            default:
-                break;
-            }
-        }
-        // update tool if labors were changed
-        if (old_mine != u->status.labors[df::unit_labor::MINE]
-                || old_cutwood != u->status.labors[df::unit_labor::CUTWOOD]
-                || old_hunt != u->status.labors[df::unit_labor::HUNT]) {
-            cancel_pickup_mismatched_equipment(u);
-            u->military.pickup_flags.bits.update = true;
-        }
-    }
-}
-
 static command_result do_labor_update_test(color_ostream &out, std::vector<std::string> &parameters)
 {
     bool saved_labors[LaborCount];
@@ -266,7 +63,7 @@ static command_result do_labor_update_test(color_ostream &out, std::vector<std::
         out.print("Updating labor for %d %s\n",
                 u->id,
                 DF2CONSOLE(Translation::TranslateName(&u->name, false)).c_str());
-        update_unit_labor(u);
+        Labor::updateUnitLabor(u);
         for (int i = 0; i < LaborCount; ++i) {
             if (saved_labors[i] != u->status.labors[i]) {
                 out.printerr("labor %s was %d, updated %d\n",
@@ -320,20 +117,155 @@ static command_result get_game_state(color_ostream &out, const EmptyMessage *, G
     return CR_OK;
 }
 
-static command_result edit_unit(color_ostream &out, const UnitProperties *props, Result *result)
+template <typename... Args>
+static void set_error(Result *result, std::format_string<Args...> fmt, Args &&...args)
 {
-    if (auto unit = df::unit::find(props->id())) {
-        if (props->has_nickname()) {
-            unit->name.nickname = props->nickname();
-        }
-        if (props->has_only_do_assigned_jobs()) {
-            unit->flags4.bits.only_do_assigned_jobs = props->only_do_assigned_jobs();
-        }
+        result->set_success(false);
+        result->set_error(std::format(fmt, std::forward<Args>(args)...));
+}
+
+static df::unit *find_unit(const UnitId &id, Result *result)
+{
+    if (auto unit = df::unit::find(id.id())) {
         result->set_success(true);
+        return unit;
     }
     else {
-        result->set_success(false);
-        result->set_error(std::format("invalid unit id: {}", props->id()));
+        set_error(result, "Invalid unit id: {}", id.id());
+        return nullptr;
+    }
+}
+
+static void set_geld(df::unit *u, bool geld);
+static void set_slaughter(df::unit *u, bool slaughter)
+{
+    if (slaughter) {
+        u->flags2.bits.slaughter = true;
+        u->flags3.bits.available_for_adoption = false;
+        if (u->flags3.bits.marked_for_gelding)
+            set_geld(u, false);
+    }
+    else {
+        u->flags2.bits.slaughter = false;
+        for (auto job_item = world->jobs.list.next; job_item; job_item = job_item->next) {
+            auto job = job_item->item;
+            if (job->job_type != df::job_type::SlaughterAnimal)
+                continue;
+            auto slaughteree = Job::getGeneralRef(job, df::general_ref_type::UNIT_SLAUGHTEREE);
+            if (slaughteree && slaughteree->getUnit() == u) {
+                Job::removeJob(job);
+                break;
+            }
+        }
+    }
+}
+static void set_geld(df::unit *u, bool geld)
+{
+    if (geld) {
+        u->flags3.bits.marked_for_gelding = true;
+        if (u->flags2.bits.slaughter)
+            set_slaughter(u, false);
+    }
+    else {
+        u->flags3.bits.marked_for_gelding = false;
+        for (auto job_item = world->jobs.list.next; job_item; job_item = job_item->next) {
+            auto job = job_item->item;
+            if (job->job_type != df::job_type::GeldAnimal)
+                continue;
+            auto geldee = Job::getGeneralRef(job, df::general_ref_type::UNIT_GELDEE);
+            if (geldee && geldee->getUnit() == u) {
+                Job::removeJob(job);
+                break;
+            }
+        }
+    }
+}
+
+static void set_adoption(df::unit *u, bool available_for_adoption)
+{
+    if (available_for_adoption) {
+        if (u->flags2.bits.slaughter)
+            set_slaughter(u, false);
+        u->flags3.bits.available_for_adoption = true;
+    }
+    else {
+        u->flags3.bits.available_for_adoption = false;
+    }
+}
+
+static command_result set_unit_properties(
+        color_ostream &out,
+        df::unit *unit,
+        const UnitProperties &props,
+        UnitResult *result)
+{
+    if (props.has_nickname()) {
+        unit->name.nickname = props.nickname();
+    }
+    result->mutable_flags()->Reserve(props.flags_size());
+    for (const auto &flag: props.flags()) {
+        auto flag_result = result->mutable_flags()->Add();
+        flag_result->set_flag(flag.flag());
+        auto r = flag_result->mutable_result();
+        switch (flag.flag()) {
+        case OnlyDoAssignedJobs:
+            if (UnitsEx::canWork(unit)) {
+                unit->flags4.bits.only_do_assigned_jobs = flag.value();
+                r->set_success(true);
+            }
+            else {
+                set_error(r, "Unit cannot work");
+            }
+            break;
+        case AvailableForAdoption:
+            if (UnitsEx::canBeAdopted(unit)) {
+                set_adoption(unit, flag.value());
+                r->set_success(true);
+            }
+            else {
+                set_error(r, "Unit cannot be adopted");
+            }
+            break;
+        case MarkedForSlaughter:
+            if (UnitsEx::isSlaughterable(unit)) {
+                set_slaughter(unit, flag.value());
+                r->set_success(true);
+            }
+            else {
+                set_error(r, "Unit cannot be slaughtered");
+            }
+            break;
+        case MarkedForGelding:
+            if (UnitsEx::isGeldable(unit)) {
+                set_geld(unit, flag.value());
+                r->set_success(true);
+            }
+            else {
+                set_error(r, "Unit cannot be gelded");
+            }
+            break;
+        default:
+            set_error(r, "Unknown unit flag");
+            break;
+        }
+
+    }
+    return CR_OK;
+}
+
+static command_result edit_unit(color_ostream &out, const EditUnit *edit, UnitResult *result)
+{
+    if (auto unit = find_unit(edit->id(), result->mutable_unit()))
+        return set_unit_properties(out, unit, edit->changes(), result);
+    return CR_OK;
+}
+
+static command_result edit_units(color_ostream &out, const EditUnits *edit, UnitResults *results)
+{
+    results->mutable_results()->Reserve(edit->units().size());
+    for (const auto &edit: edit->units()) {
+        auto result = results->mutable_results()->Add();
+        edit_unit(out, &edit, result);
     }
     return CR_OK;
 }
@@ -365,8 +297,7 @@ static command_result set_work_detail_properties(
             work_detail->work_detail_flags.bits.mode = df::work_detail_mode::OnlySelectedDoesThis;
             break;
         default:
-            r->set_success(false);
-            r->set_error(std::format("Invalid work detail mode: {}", static_cast<int>(props.mode())));
+            set_error(r, "Invalid work detail mode: {}", static_cast<int>(props.mode()));
             break;
         }
         if (work_detail->work_detail_flags.bits.mode != old_mode)
@@ -379,13 +310,11 @@ static command_result set_work_detail_properties(
         auto r = result->mutable_assignments()->Add();
         auto unit = df::unit::find(assign.unit_id());
         if (!unit) {
-            r->set_success(false);
-            r->set_error(std::format("unit {} not found", assign.unit_id()));
+            set_error(r, "unit {} not found", assign.unit_id());
             continue;
         }
-        if (!can_assign_work_detail(unit)) {
-            r->set_success(false);
-            r->set_error(std::format("unit {} can not be assigned to a work detail", unit->id));
+        if (!UnitsEx::canWork(unit)) {
+            set_error(r, "unit {} can not be assigned to a work detail", unit->id);
             continue;
         }
         r->set_success(true);
@@ -399,7 +328,7 @@ static command_result set_work_detail_properties(
             if (!erase_from_vector(work_detail->assigned_units, unit->id))
                 r->set_error(std::format("unit {} already not assigned", unit->id));
         }
-        update_unit_labor(unit);
+        Labor::updateUnitLabor(unit);
     }
     // Labors
     if (auto s = props.labors_size())
@@ -407,8 +336,7 @@ static command_result set_work_detail_properties(
     for (const auto &labor: props.labors()) {
         auto r = result->mutable_labors()->Add();
         if (labor.labor() < 0 || labor.labor() >= LaborCount) {
-            r->set_success(false);
-            r->set_error(std::format("Invalid labor value: {}", labor.labor()));
+            set_error(r, "Invalid labor value: {}", labor.labor());
             continue;
         }
         r->set_success(true);
@@ -433,7 +361,7 @@ static command_result set_work_detail_properties(
     // Update all labors in case of global work detail changes
     if (labor_changed) {
         for (auto unit: world->units.active)
-            update_unit_labor(unit);
+            Labor::updateUnitLabor(unit);
     }
     return CR_OK;
 }
@@ -443,15 +371,13 @@ static auto find_work_detail(const WorkDetailId &id, Result *result)
 {
     auto &work_details = plotinfo->labor_info.work_details;
     if (id.index() >= work_details.size()) {
-        result->set_success(false);
-        result->set_error(std::format("invalid work detail index: {}", id.index()));
+        set_error(result, "invalid work detail index: {}", id.index());
         return work_details.end();
     }
     auto work_detail = work_details.begin() + id.index();
     if ((*work_detail)->name != id.name()) {
-        result->set_success(false);
-        result->set_error(std::format("invalid work detail name: {} is named {}, parameter was {}",
-                    id.index(), (*work_detail)->name, id.name()));
+        set_error(result, "invalid work detail name: {} is named {}, parameter was {}",
+                    id.index(), (*work_detail)->name, id.name());
         return work_details.end();
     }
     result->set_success(true);
@@ -526,15 +452,13 @@ static command_result move_work_detail(
     std::size_t old_position = distance(work_details.begin(), work_detail);
     // Check new position
     if (!move->has_new_position()) {
-        result->set_success(false);
-        result->set_error("Missing new position");
+        set_error(result, "Missing new position");
         return CR_OK;
     }
     std::size_t new_position = move->new_position();
     if (new_position >= work_details.size()) {
-        result->set_success(false);
-        result->set_error(std::format("Invalid new position: {}, size is {}",
-                new_position, work_details.size()));
+        set_error(result, "Invalid new position: {}, size is {}",
+                new_position, work_details.size());
         return CR_OK;
     }
     // Apply move
@@ -556,6 +480,7 @@ DFhackCExport RPCService *plugin_rpcconnect(color_ostream &out)
     svc->addFunction("GetProcessInfo", get_process_info, SF_ALLOW_REMOTE | SF_DONT_SUSPEND);
     svc->addFunction("GetGameState", get_game_state, SF_ALLOW_REMOTE);
     svc->addFunction("EditUnit", edit_unit, SF_ALLOW_REMOTE);
+    svc->addFunction("EditUnits", edit_units, SF_ALLOW_REMOTE);
     svc->addFunction("EditWorkDetail", edit_work_detail, SF_ALLOW_REMOTE);
     svc->addFunction("AddWorkDetail", add_work_detail, SF_ALLOW_REMOTE);
     svc->addFunction("RemoveWorkDetail", remove_work_detail, SF_ALLOW_REMOTE);
