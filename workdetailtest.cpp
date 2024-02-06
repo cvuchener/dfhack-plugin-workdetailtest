@@ -274,9 +274,9 @@ static command_result set_work_detail_properties(
         color_ostream &out,
         df::work_detail *work_detail,
         const WorkDetailProperties &props,
-        WorkDetailResult *result)
+        WorkDetailResult *result,
+        bool update_labors_for_all = false)
 {
-    bool labor_changed = false;
     // Name
     if (props.has_name()) {
         work_detail->name = props.name();
@@ -301,7 +301,7 @@ static command_result set_work_detail_properties(
             break;
         }
         if (work_detail->work_detail_flags.bits.mode != old_mode)
-            labor_changed = true;
+            update_labors_for_all = true;
     }
     // Assignments
     if (auto s = props.assignments_size())
@@ -341,7 +341,7 @@ static command_result set_work_detail_properties(
         }
         r->set_success(true);
         work_detail->allowed_labors[labor.labor()] = labor.enable();
-        labor_changed = true;
+        update_labors_for_all = true;
     }
     // Icon
     if (props.has_icon()) {
@@ -359,7 +359,7 @@ static command_result set_work_detail_properties(
     if (props.has_cannot_be_everybody())
         work_detail->work_detail_flags.bits.cannot_be_everybody = props.cannot_be_everybody();
     // Update all labors in case of global work detail changes
-    if (labor_changed) {
+    if (update_labors_for_all) {
         for (auto unit: world->units.active)
             Labor::updateUnitLabor(unit);
     }
@@ -417,7 +417,7 @@ static command_result add_work_detail(
     work_details.insert(insert_pos, new_work_detail);
     result->mutable_work_detail()->set_success(true);
     // Set new work detail properties
-    return set_work_detail_properties(out, new_work_detail, add->properties(), result);
+    return set_work_detail_properties(out, new_work_detail, add->properties(), result, true);
 }
 
 static command_result remove_work_detail(
@@ -434,6 +434,9 @@ static command_result remove_work_detail(
     // Delete
     delete *work_detail;
     plotinfo->labor_info.work_details.erase(work_detail);
+    // Update labors
+    for (auto unit: world->units.active)
+        Labor::updateUnitLabor(unit);
     return CR_OK;
 }
 
