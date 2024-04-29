@@ -26,6 +26,7 @@
 #include "UnitsEx.h"
 #include "Labor.h"
 
+#include "df/general_ref.h"
 #include "df/interfacest.h"
 #include "df/plotinfost.h"
 #include "df/unit.h"

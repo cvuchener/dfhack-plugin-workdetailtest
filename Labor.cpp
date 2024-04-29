@@ -25,6 +25,7 @@
 #include "UnitsEx.h"
 
 #include "df/gamest.h"
+#include "df/item.h"
 #include "df/job.h"
 #include "df/job_item_ref.h"
 #include "df/occupation.h"
